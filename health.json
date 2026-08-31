@@ -1,7 +1,9 @@
 {
   "ok": true,
-  "build": "0.0.8-LYRA-GUIDE",
-  "starterSet": "v1-locked",
+  "build": "0.0.9-STARTER-FACTORY",
+  "starterSet": "v1.1-locked",
   "quest": "FIRST FLIGHT",
-  "guide": "LYRA-v1"
+  "guide": "LYRA-v1",
+  "factory": "starter-factory-v1",
+  "researchCenter": "reserved-dormant"
 }
