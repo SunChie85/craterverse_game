@@ -1,9 +1,11 @@
 {
   "ok": true,
-  "build": "0.0.9-STARTER-FACTORY",
+  "build": "0.0.10-FACTORY-VEX-POLISH",
   "starterSet": "v1.1-locked",
-  "quest": "FIRST FLIGHT",
+  "quest": "FIRST FLIGHT + VEX",
   "guide": "LYRA-v1",
-  "factory": "starter-factory-v1",
+  "factory": "timed-server-authoritative-v2",
+  "vexShip": "personal-explorer-v1",
+  "spaceTrading": false,
   "researchCenter": "reserved-dormant"
 }
