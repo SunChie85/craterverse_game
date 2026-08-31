@@ -128,7 +128,7 @@
   <!-- Crash guard: a JS error during load/boot shows a readable banner
        instead of a silent black screen (e.g. mixed-version deploys). -->
   <script>
-    window.CRATERVERSE_BUILD = '0.0.6-FIXED_3-ONEFILE';
+    window.CRATERVERSE_BUILD = '0.0.6-FIXED_4-MINE-SYNC';
     window.__CV_BOOT_STAGE = 'html';
     window.addEventListener('error', function (ev) {
       try {
@@ -146,7 +146,7 @@
           document.body.appendChild(el);
         }
         el.textContent = '⚠ GAME ERROR — ' + msg +
-          '\nIf this happens right after an update: re-upload this ONE index.html file from FIXED_3. Local game modules are embedded.';
+          '\nIf this happens right after an update: re-upload this ONE index.html file from FIXED_4. Local game modules are embedded.';
       } catch (e) { /* never break the page from the guard itself */ }
     });
     window.addEventListener('unhandledrejection', function (ev) {
@@ -164,7 +164,7 @@
         }
         el.textContent = '⚠ GAME PROMISE ERROR — ' + msg +
           '\nBoot stage: ' + (window.__CV_BOOT_STAGE || 'html') +
-          '\nReload after uploading Game/index.html from FIXED_3 ONEFILE.';
+          '\nReload after uploading Game/index.html from FIXED_4 ONEFILE.';
       } catch (e) {}
     });
   </script>
@@ -187,9 +187,9 @@
     </div>
   </div>
 
-  <!-- Build 0.0.6 FIXED_3 ONEFILE: local scripts are embedded; deployment cannot mix JS versions. -->
+  <!-- Build 0.0.6 FIXED_4 MINE-SYNC ONEFILE: local scripts are embedded; deployment cannot mix JS versions. -->
 
-  <!-- FIXED_3 ONEFILE: all local game JS is embedded below; no /js/*.js network requests. -->
+  <!-- FIXED_4 ONEFILE: all local game JS is embedded below; no /js/*.js network requests. -->
 
   <script>
 /* ===== EMBEDDED MODULE: phaser.min.js ===== */
@@ -405,7 +405,7 @@ const GameState = {
 /* ===== EMBEDDED MODULE: supa.js ===== */
 // ============================================================
 // CRATERVERSE — Supabase bridge — BOOT HARDENED
-// v0.0.6 FIXED_3 ONEFILE
+// v0.0.6 FIXED_2
 //
 // Goals:
 // - never leave the player forever on CONNECTING…
@@ -722,10 +722,27 @@ const Net = {
     return result.data;
   },
 
+  // Starter Mine v2: one authoritative server transaction returns the exact
+  // collected amount AND the post-collect state. The client must adopt these
+  // values instead of subtracting from its locally simulated counter.
   collectSpeck() {
-    return this.rpc('collect_speck').then((rows) =>
-      rows && rows[0] ? rows[0].collected : 0
-    );
+    return this.rpc('collect_starter_mine_v2').then((rows) => {
+      const row = rows && rows[0] ? rows[0] : null;
+      if (!row) {
+        return {
+          collected: 0,
+          pending: GameState.speck.pending,
+          ironTotal: GameState.storage.iron,
+          serverTick: Date.now(),
+        };
+      }
+      return {
+        collected: Number(row.collected) || 0,
+        pending: Math.max(0, Number(row.pending) || 0),
+        ironTotal: Math.max(0, Number(row.iron_total) || 0),
+        serverTick: row.server_tick ? new Date(row.server_tick).getTime() : Date.now(),
+      };
+    });
   },
 
   craft(recipeKey) {
@@ -811,7 +828,6 @@ window.DEV = {
       p_status: status || 'todo',
     }),
 };
-
 //# sourceURL=embedded/supa.js
   </script>
   <script>
@@ -3118,19 +3134,37 @@ class SpeckScene extends Phaser.Scene {
   }
 
   collectMine() {
+    if (this.collectingMine) return;
+    this.collectingMine = true;
+
     Net.collectSpeck()
-      .then((units) => {
-        if (units > 0) {
-          GameState.storage.iron += units;
-          GameState.speck.pending = Math.max(0, GameState.speck.pending - units);
-          GameState.speck.lastTick = Date.now();
-          this.updateMineVisual(true);
-          this.msg('Mine collected: +' + units + ' Iron → Storage. Mining resumed.');
+      .then((result) => {
+        // Server is the single source of truth for passive production.
+        // Adopt the exact state returned by the same transaction that collected it.
+        GameState.storage.iron = result.ironTotal;
+        GameState.speck.pending = result.pending;
+        GameState.speck.lastTick = Number.isFinite(result.serverTick)
+          ? result.serverTick
+          : Date.now();
+
+        this.updateMineVisual(true);
+
+        if (result.collected > 0) {
+          this.msg(
+            'Mine collected: +' + result.collected +
+            ' Iron → Storage. ' + result.pending.toFixed(1) + ' remains.'
+          );
         } else {
           this.msg('Mine: less than 1 Iron is ready. Production continues at 0.5/min.');
         }
       })
-      .catch(() => this.msg('Connection issue — nothing was lost. Try again.'));
+      .catch((e) => {
+        console.warn('[starter mine collect]', e && e.message ? e.message : e);
+        this.msg('Mine sync failed — no local balance changed. Run the Mine Sync SQL if this is the first FIXED_4 test.');
+      })
+      .finally(() => {
+        this.collectingMine = false;
+      });
   }
 
   showStorage() {
@@ -3196,7 +3230,6 @@ class SpeckScene extends Phaser.Scene {
     }
   }
 }
-
 //# sourceURL=embedded/SpeckScene.js
   </script>
   <script>
@@ -3362,7 +3395,7 @@ class UIScene extends Phaser.Scene {
   <script>
 /* ===== EMBEDDED MODULE: main.js ===== */
 // ============================================================
-// CRATERVERSE — Entry point — BOOT HARDENED v0.0.6 FIXED_3 ONEFILE
+// CRATERVERSE — Entry point — BOOT HARDENED v0.0.6 FIXED_4 MINE-SYNC ONEFILE
 // No auth/network promise is allowed to leave CONNECTING… forever.
 // ============================================================
 
