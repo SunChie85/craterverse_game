@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<script>try{if(location.pathname==='/game'||location.pathname==='/game.html')history.replaceState(null,'','/');}catch(_){}</script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Craterverse — Prototype</title>
@@ -129,7 +128,7 @@
   <!-- Crash guard: a JS error during load/boot shows a readable banner
        instead of a silent black screen (e.g. mixed-version deploys). -->
   <script>
-    window.CRATERVERSE_BUILD = '0.0.6-FIXED_4-MINE-SYNC';
+    window.CRATERVERSE_BUILD = '0.0.7-FIRST-FLIGHT';
     window.__CV_BOOT_STAGE = 'html';
     window.addEventListener('error', function (ev) {
       try {
@@ -147,7 +146,7 @@
           document.body.appendChild(el);
         }
         el.textContent = '⚠ GAME ERROR — ' + msg +
-          '\nIf this happens right after an update: re-upload this ONE index.html file from FIXED_4. Local game modules are embedded.';
+          '\nIf this happens right after an update: re-upload this ONE index.html file from v0.0.7. Local game modules are embedded.';
       } catch (e) { /* never break the page from the guard itself */ }
     });
     window.addEventListener('unhandledrejection', function (ev) {
@@ -165,7 +164,7 @@
         }
         el.textContent = '⚠ GAME PROMISE ERROR — ' + msg +
           '\nBoot stage: ' + (window.__CV_BOOT_STAGE || 'html') +
-          '\nReload after uploading Game/index.html from FIXED_4 ONEFILE.';
+          '\nReload after uploading Game/index.html from v0.0.7 ONEFILE.';
       } catch (e) {}
     });
   </script>
@@ -188,9 +187,9 @@
     </div>
   </div>
 
-  <!-- Build 0.0.6 FIXED_4 MINE-SYNC ONEFILE: local scripts are embedded; deployment cannot mix JS versions. -->
+  <!-- Build 0.0.7 FIRST-FLIGHT ONEFILE: local scripts are embedded; deployment cannot mix JS versions. -->
 
-  <!-- FIXED_4 ONEFILE: all local game JS is embedded below; no /js/*.js network requests. -->
+  <!-- v0.0.7 ONEFILE: all local game JS is embedded below; no /js/*.js network requests. -->
 
   <script>
 /* ===== EMBEDDED MODULE: phaser.min.js ===== */
@@ -339,6 +338,11 @@ const GameState = {
   // Game stats (for quests)
   stats: { ironMined: 0 },
 
+  // New-player onboarding. Separate from the legacy Vex/Diamond quest chain.
+  // 0 inspect ship → 1 launch → 2 mine 5 Iron → 3 return/dock →
+  // 4 collect passive Mine → 5 complete (+100 Credits, Vex signal unlocked).
+  starterQuest: { stage: 0 },
+
   // Quest progress
   // StarterQuest: 0 = mine 5 Iron, 1 = deposit at the Speck,
   // 2 = reach the unknown signal, 4 = Vex settled.
@@ -399,7 +403,6 @@ const GameState = {
     return true;
   },
 };
-
 //# sourceURL=embedded/state.js
   </script>
   <script>
@@ -695,6 +698,7 @@ const Net = {
     GameState.items.diamond = Number(data.diamond) || 0;
     GameState.credits = Number(data.credits) || 0;
     GameState.quest.stage = Number(data.quest_stage) || 0;
+    GameState.starterQuest.stage = Number(data.starter_quest_stage) || 0;
     GameState.speck.pending = Number(data.speck_pending) || 0;
     GameState.speck.lastTick = data.speck_last_tick ? new Date(data.speck_last_tick).getTime() : Date.now();
     GameState.starterPack.speck = data.starter_speck_version || 'starter-speck-v1';
@@ -764,6 +768,10 @@ const Net = {
 
   advanceQuest(stage) {
     return this.rpc('advance_quest', { p_stage: stage });
+  },
+
+  advanceStarterFirstFlight(eventName) {
+    return this.rpc('advance_starter_first_flight', { p_event: eventName });
   },
 
   setStarterShipSkin(skin) {
@@ -1796,7 +1804,12 @@ class GameScene extends Phaser.Scene {
       this.ship.setPosition(this.station.x, this.station.y + 200);
       this.ship.setVelocity(0, 0);
       this.scene.wake('UIScene');
-      this.notify('Takeoff! Safe flight.');
+      if (GameState.starterQuest.stage >= 5 && GameState.quest.stage >= 2 && !this.merchant) {
+        this.spawnMerchant();
+        this.notify('⚠ UNKNOWN SIGNAL detected in the sector... Follow the orange arrow!');
+      } else {
+        this.notify('Takeoff! Safe flight.');
+      }
     });
 
     this.scene.launch('UIScene');
@@ -1816,7 +1829,15 @@ class GameScene extends Phaser.Scene {
       }
     }
     // Vex is already settled (or approaching) based on saved progress
-    if (GameState.quest.stage >= 2) this.spawnMerchant();
+    if (GameState.starterQuest.stage >= 5 && GameState.quest.stage >= 2) this.spawnMerchant();
+
+    // A brand-new pilot begins on the Starter Speck, not floating in space.
+    if (GameState.starterQuest.stage === 0) {
+      this.time.delayedCall(80, () => {
+        this.scene.sleep('UIScene');
+        this.scene.switch('SpeckScene');
+      });
+    }
   }
 
   // ----------------------------------------------------------
@@ -2417,6 +2438,12 @@ class GameScene extends Phaser.Scene {
             if (ok) {
               const dumped = GameState.deposit(cargoDump);
               this.notify('Cargo unloaded: +' + dumped + ' resources in storage.');
+              // FIRST FLIGHT 3→4 is advanced by the server inside deposit_cargo
+              // only when at least 5 Iron were actually deposited.
+              if (GameState.starterQuest.stage === 3 && (cargoDump.iron || 0) >= 5) {
+                GameState.starterQuest.stage = 4;
+                this.notify('FIRST FLIGHT — Cargo secured. Collect your Speck Mine.');
+              }
               Net.refresh();
             } else {
               Object.entries(cargoDump).forEach(([k, v]) => { ship.cargo[k] += v; });
@@ -2432,13 +2459,6 @@ class GameScene extends Phaser.Scene {
       }
       this.notify('Landing on the Speck...');
 
-      // StarterQuest stage 1 → 2: the haul is deposited, a signal appears
-      if (GameState.quest.stage === 1) {
-        GameState.quest.stage = 2;
-        this.questSync(2);
-        this.spawnMerchant();
-        this.notify('⚠ UNKNOWN SIGNAL detected in the sector... Follow the orange arrow!');
-      }
       SaveSystem.save(this.game, true);
       this.tweens.add({
         targets: ship,
@@ -2539,13 +2559,21 @@ class GameScene extends Phaser.Scene {
       const added = ship.addResource(target.resource.key, units);
       if (added > 0) {
         this.notify('+' + added + ' ' + target.resource.name);
-        // StarterQuest stage 0: count mined Iron
         if (target.resource.key === 'iron') {
           GameState.stats.ironMined += added;
-          if (GameState.quest.stage === 0 && GameState.stats.ironMined >= 5) {
-            GameState.quest.stage = 1;
-            this.questSync(1);
-            this.notify('✓ Objective complete! Head back and deposit your haul at the Speck.');
+          // FIRST FLIGHT 2→3 is advanced by the server inside sync_ship once
+          // the persisted cargo really contains at least 5 Iron.
+          if (GameState.starterQuest.stage === 2 && ship.cargo.iron >= 5 && !this.firstFlightCargoSync) {
+            this.firstFlightCargoSync = true;
+            Net.syncShip(ship.energy, ship.cargo)
+              .then((ok) => {
+                if (ok && GameState.starterQuest.stage === 2) {
+                  GameState.starterQuest.stage = 3;
+                  this.notify('CARGO ACQUIRED — Iron ×5. Return to your Speck.');
+                }
+              })
+              .catch((e) => console.warn('[first flight cargo]', e.message))
+              .finally(() => { this.firstFlightCargoSync = false; });
           }
         }
       }
@@ -2610,7 +2638,6 @@ class GameScene extends Phaser.Scene {
       .setPosition(cx + Math.cos(angle) * (r - 52), cy + Math.sin(angle) * (r - 52));
   }
 }
-
 //# sourceURL=embedded/GameScene.js
   </script>
   <script>
@@ -2737,9 +2764,11 @@ class SpeckScene extends Phaser.Scene {
       this.msg('Starter Speck v1 — ship secured. [E] Take off.');
     });
 
-    this.msg(
-      'Starter Speck v1 — Mine + Storage + underground ship hangar. [E] Take off.'
-    );
+    if (GameState.starterQuest.stage === 0) {
+      this.msg('SYSTEM // PILOT LINK ONLINE — Starter Speck registered. Inspect your ship.');
+    } else {
+      this.msg('Starter Speck v1 — ship secured. [E] Take off.');
+    }
   }
 
   makeMineSprite(x, y, cfg, onClick) {
@@ -2829,6 +2858,21 @@ class SpeckScene extends Phaser.Scene {
 
     sprite.on('pointerdown', () => {
       this.playBasePulse();
+      if (GameState.starterQuest.stage === 0 && !this.firstFlightActionBusy) {
+        this.firstFlightActionBusy = true;
+        Net.advanceStarterFirstFlight('inspect_ship')
+          .then((stage) => {
+            GameState.starterQuest.stage = Number(stage) || 0;
+            this.msg('STARTER SHIP // READY — Energy 100%. Cargo 20. Launch when ready.');
+            this.updateStarterQuestTracker();
+          })
+          .catch((e) => {
+            console.warn('[first flight inspect]', e.message);
+            this.msg('Pilot link sync failed. Click the hangar again.');
+          })
+          .finally(() => { this.firstFlightActionBusy = false; });
+        return;
+      }
       this.setPaintPanel(true);
       this.msg('Underground Hangar — ship secured. Paint bay ready. Choose a hull color.');
     });
@@ -3012,6 +3056,12 @@ class SpeckScene extends Phaser.Scene {
       ...style, fontSize: '12px', color: '#f2d35f'
     });
 
+    this.starterQuestBar = UIKit.questBar(this, W / 2, 28, 470).setDepth(1800);
+    this.starterQuestText = this.add.text(W / 2, 26, '', {
+      ...style, fontSize: '12px', color: '#f2b04d'
+    }).setOrigin(0.5).setDepth(1801);
+    this.updateStarterQuestTracker();
+
     this.mineCounter = this.add.text(this.minePos[0], this.minePos[1] - 74, '', {
       fontFamily: 'monospace',
       fontSize: '13px',
@@ -3039,6 +3089,21 @@ class SpeckScene extends Phaser.Scene {
     );
     btn.img.setDepth(1700);
     btn.txt.setDepth(1701);
+  }
+
+  updateStarterQuestTracker() {
+    if (!this.starterQuestBar || !this.starterQuestText) return;
+    const stage = GameState.starterQuest.stage;
+    const objectives = {
+      0: '◆ FIRST FLIGHT — Inspect your ship',
+      1: '◆ FIRST FLIGHT — Launch from the Speck',
+      2: '◆ FIRST FLIGHT — Mine 5 Iron',
+      3: '◆ FIRST FLIGHT — Return home and dock',
+      4: '◆ FIRST FLIGHT — Collect your Speck Mine',
+    };
+    const text = objectives[stage];
+    this.starterQuestBar.setVisible(!!text);
+    this.starterQuestText.setVisible(!!text).setText(text || '');
   }
 
   buildPaintPanel() {
@@ -3135,11 +3200,17 @@ class SpeckScene extends Phaser.Scene {
   }
 
   collectMine() {
+    // Preserve the guaranteed first-flight Mine buffer until the tutorial
+    // actually asks the player to collect it.
+    if (GameState.starterQuest.stage < 4) {
+      this.msg('FIRST FLIGHT — Leave the Mine running for now. Complete your first cargo run.');
+      return;
+    }
     if (this.collectingMine) return;
     this.collectingMine = true;
 
     Net.collectSpeck()
-      .then((result) => {
+      .then(async (result) => {
         // Server is the single source of truth for passive production.
         // Adopt the exact state returned by the same transaction that collected it.
         GameState.storage.iron = result.ironTotal;
@@ -3151,10 +3222,20 @@ class SpeckScene extends Phaser.Scene {
         this.updateMineVisual(true);
 
         if (result.collected > 0) {
-          this.msg(
-            'Mine collected: +' + result.collected +
-            ' Iron → Storage. ' + result.pending.toFixed(1) + ' remains.'
-          );
+          if (GameState.starterQuest.stage === 4) {
+            await Net.loadState();
+            this.updateStarterQuestTracker();
+            if (GameState.starterQuest.stage >= 5) {
+              this.msg('FIRST FLIGHT COMPLETE — +100 Credits. UNKNOWN SIGNAL DETECTED.');
+            }
+          } else {
+            this.msg(
+              'Mine collected: +' + result.collected +
+              ' Iron → Storage. ' + result.pending.toFixed(1) + ' remains.'
+            );
+          }
+        } else if (GameState.starterQuest.stage === 4) {
+          this.msg('FIRST FLIGHT — Mine is still warming up. Collect when at least 1 Iron is ready.');
         } else {
           this.msg('Mine: less than 1 Iron is ready. Production continues at 0.5/min.');
         }
@@ -3181,14 +3262,37 @@ class SpeckScene extends Phaser.Scene {
   }
 
   takeOff() {
-    if (this.takingOff) return;
-    this.takingOff = true;
-    this.setPaintPanel(false);
-    SaveSystem.save(this.game, true);
-    this.msg('Hangar lift online — preparing Starter Ship...');
-    this.playDockTakeoff(() => {
-      this.scene.switch('GameScene');
-    });
+    if (this.takingOff || this.firstFlightActionBusy) return;
+    if (GameState.starterQuest.stage === 0) {
+      this.msg('FIRST FLIGHT — Inspect your ship first: click the underground hangar.');
+      return;
+    }
+
+    const launch = () => {
+      this.takingOff = true;
+      this.setPaintPanel(false);
+      SaveSystem.save(this.game, true);
+      this.msg('Hangar lift online — preparing Starter Ship...');
+      this.playDockTakeoff(() => this.scene.switch('GameScene'));
+    };
+
+    if (GameState.starterQuest.stage === 1) {
+      this.firstFlightActionBusy = true;
+      Net.advanceStarterFirstFlight('launch')
+        .then((stage) => {
+          GameState.starterQuest.stage = Number(stage) || GameState.starterQuest.stage;
+          this.updateStarterQuestTracker();
+          if (GameState.starterQuest.stage >= 2) launch();
+          else this.msg('Launch authorization not confirmed. Try again.');
+        })
+        .catch((e) => {
+          console.warn('[first flight launch]', e.message);
+          this.msg('Launch sync failed. Try again.');
+        })
+        .finally(() => { this.firstFlightActionBusy = false; });
+      return;
+    }
+    launch();
   }
 
   update(time, delta) {
@@ -3200,6 +3304,7 @@ class SpeckScene extends Phaser.Scene {
 
     GameState.tickSpeck();
     this.updateMineVisual();
+    this.updateStarterQuestTracker();
 
     const eRatio = ship.energy / CONFIG.ENERGY.MAX;
     this.energyGauge.set(eRatio);
@@ -3363,25 +3468,39 @@ class UIScene extends Phaser.Scene {
       t.setAlpha(Phaser.Math.Clamp(1.2 - age / 8, 0, 1));
     });
 
-    // StarterQuest tracker
-    const stage = GameState.quest.stage;
-    const objectives = {
-      0: '◆ QUEST — Mine Iron (' + Math.min(GameState.stats.ironMined, 5) + '/5)',
-      1: '◆ QUEST — Land on your Speck to deposit your haul',
-      2: '◆ QUEST — Unknown signal detected... Follow it! [orange arrow]',
-      4: '◆ Vex has a proposition for you... go see him',
-      5: '◆ Diamond Press — Coal ' + Math.min(GameState.storage.coal, 15) + '/15 + Iron ' +
-         Math.min(GameState.storage.iron, 10) + '/10, then see Vex',
-      6: '◆ QUEST — Craft a DIAMOND at your workshop',
-    };
-    if (objectives[stage]) {
-      this.questText.setVisible(true).setText(objectives[stage]);
-      if (stage !== this.lastQuestStage) {
-        // Resize the banner to the objective text, capped to the free zone
+    // FIRST FLIGHT tracker takes priority until onboarding is complete.
+    const firstStage = GameState.starterQuest.stage;
+    let objective = null;
+    let trackerStage = 'first-' + firstStage;
+    if (firstStage < 5) {
+      const firstObjectives = {
+        0: '◆ FIRST FLIGHT — Inspect your ship on the Speck',
+        1: '◆ FIRST FLIGHT — Launch from the Speck',
+        2: '◆ FIRST FLIGHT — Mine 5 Iron (' + Math.min(ship.cargo.iron || 0, 5) + '/5)',
+        3: '◆ FIRST FLIGHT — Return home and dock',
+        4: '◆ FIRST FLIGHT — Collect your Speck Mine',
+      };
+      objective = firstObjectives[firstStage] || null;
+    } else {
+      const stage = GameState.quest.stage;
+      trackerStage = 'legacy-' + stage;
+      const objectives = {
+        2: '◆ QUEST — Unknown signal detected... Follow it! [orange arrow]',
+        4: '◆ Vex has a proposition for you... go see him',
+        5: '◆ Diamond Press — Coal ' + Math.min(GameState.storage.coal, 15) + '/15 + Iron ' +
+           Math.min(GameState.storage.iron, 10) + '/10, then see Vex',
+        6: '◆ QUEST — Craft a DIAMOND at your workshop',
+      };
+      objective = objectives[stage] || null;
+    }
+
+    if (objective) {
+      this.questText.setVisible(true).setText(objective);
+      if (trackerStage !== this.lastQuestStage) {
         const maxW = this.questZoneRight - this.questZoneLeft;
         const w = Math.min(maxW, this.questText.width + 80);
         this.questBar.setTexture(UIKit.nine(this, 'ui_quest_bar', w, 33, 27, 29, 0, 0));
-        this.lastQuestStage = stage;
+        this.lastQuestStage = trackerStage;
       }
       this.questBar.setVisible(true);
     } else {
@@ -3390,7 +3509,6 @@ class UIScene extends Phaser.Scene {
     }
   }
 }
-
 //# sourceURL=embedded/UIScene.js
   </script>
   <script>
@@ -3432,8 +3550,8 @@ function assertBuildIntegrity() {
   if (typeof Ship === 'undefined' || typeof Ship.prototype.setSkin !== 'function') problems.push('Ship.js');
   if (typeof SHIP_SKIN_ORDER === 'undefined' || SHIP_SKIN_ORDER.length !== 5) problems.push('ship_assets.js');
   if (typeof SHIP_ASSETS === 'undefined' || !SHIP_ASSETS.skins || !SHIP_ASSETS.skins.orange) problems.push('ship_assets data');
-  if (typeof Net === 'undefined' || typeof Net.init !== 'function' || typeof Net.setStarterShipSkin !== 'function') problems.push('supa.js');
-  if (typeof GameState === 'undefined' || !GameState.starterPack || !('shipSkin' in GameState.starterPack)) problems.push('state.js');
+  if (typeof Net === 'undefined' || typeof Net.init !== 'function' || typeof Net.setStarterShipSkin !== 'function' || typeof Net.advanceStarterFirstFlight !== 'function') problems.push('supa.js');
+  if (typeof GameState === 'undefined' || !GameState.starterPack || !('shipSkin' in GameState.starterPack) || !GameState.starterQuest) problems.push('state.js');
   if (problems.length) {
     throw new Error('Mixed/incomplete game build: ' + problems.join(', ') + '. Upload the COMPLETE Game/js folder + index.html.');
   }

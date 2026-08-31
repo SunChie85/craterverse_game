@@ -1,5 +1,6 @@
 {
   "ok": true,
-  "build": "0.0.6-FIXED_4-MINE-SYNC",
-  "maintenance_gate": "v2-host-aware"
+  "build": "0.0.7-FIRST-FLIGHT",
+  "starterSet": "v1-locked",
+  "quest": "FIRST FLIGHT"
 }
