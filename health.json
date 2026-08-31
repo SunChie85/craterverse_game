@@ -1,12 +1,1 @@
-{
-  "ok": true,
-  "build": "0.0.11-UI-RADIO",
-  "starterSet": "v1.1-locked",
-  "quest": "FIRST FLIGHT + VEX",
-  "guide": "LYRA-v1-contextual",
-  "ui": "CRATERVERSE-UI-SYSTEM-v2-code-generated",
-  "radio": "CRATER-RADIO-v1-4xCC0",
-  "factory": "timed-server-authoritative-v2",
-  "spaceTrading": false,
-  "researchCenter": "reserved-dormant"
-}
+{"ok":true,"build":"0.0.12-AAA-UI-SFX-VEX","radio":false,"sfx":"procedural","vex_shop":"server-authoritative"}
